@@ -1,6 +1,8 @@
+use std::thread;
 use std::fmt;
 use std::fmt::Display;
 use std::fs::File;
+use std::path::PathBuf;
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::net::TcpListener;
@@ -14,13 +16,32 @@ enum HTTPStatus {
   ServerError = 500,
 }
 
-
 struct HTTPResponse {
   status_code: HTTPStatus,
   body: Option<Box<String>>,
 }
 
 impl HTTPResponse {
+  fn ok(body: Box<String>) -> Self {
+    HTTPResponse{status_code: HTTPStatus::Ok, body: Some(body)}
+  }
+
+  fn bad_request() -> Self {
+    HTTPResponse{status_code: HTTPStatus::BadRequest, body: None}
+  }
+
+  fn not_found() -> Self {
+    HTTPResponse{status_code: HTTPStatus::NotFound, body: None}
+  }
+
+  fn bad_method() -> Self {
+    HTTPResponse{status_code: HTTPStatus::BadMethod, body: None}
+  }
+
+  fn server_error() -> Self {
+    HTTPResponse{status_code: HTTPStatus::ServerError, body: None}
+  }
+
   fn write(self, stream: &mut TcpStream) {
     let status = format!("{}", self.status_code as u16);
     let header = format!("HTTP/1.1 {} ERROR", status);
@@ -51,7 +72,9 @@ fn main() {
 
   for stream in listener.incoming() {
     let stream = stream.unwrap();
-    handle_connection(stream);
+    thread::spawn(|| {
+      handle_connection(stream);
+    });
   }
 }
 
@@ -74,7 +97,7 @@ fn get_response(input: &str) -> HTTPResponse {
   // GET / HTTP/1.1\r\n
   if input.starts_with("GET") {
     match input.split(" ").nth(1) {
-      Some(s) => load_file(s),
+      Some(s) => load_url(s),
       None => HTTPResponse{status_code: HTTPStatus::BadRequest, body: None},
     }
   } else {
@@ -82,20 +105,41 @@ fn get_response(input: &str) -> HTTPResponse {
   }
 }
 
-fn load_file(path: &str) -> HTTPResponse {
-  let mut corrected_path = ".".to_string();
-  corrected_path = corrected_path + path;
-  println!("Load file: {}", corrected_path);
+fn load_url(url: &str) -> HTTPResponse {
+  let mut path = PathBuf::from("./");
+  path.push(url);
 
-  let mut file = match File::open(corrected_path) {
-    Ok(f) => f,
-    Err(_) => return HTTPResponse{status_code: HTTPStatus::NotFound, body: None},
-  };
+  if path.is_dir() {
+    println!("Load index: {:?}", path);
 
-  let mut contents = String::new();
-  match file.read_to_string(&mut contents) {
-    Ok(_) => HTTPResponse{status_code: HTTPStatus::Ok, body: Some(Box::new(contents))},
-    Err(_) => HTTPResponse{status_code: HTTPStatus::ServerError, body: None},
+    let mut contents = String::new();
+    match load_index(path, &mut contents) {
+      Ok(_) => HTTPResponse::ok(Box::new(contents)),
+      Err(_) => HTTPResponse::server_error(),
+    }
+  } else if path.is_file() {
+    println!("Load file: {:?}", path);
+
+    let mut contents = String::new();
+    match load_file(path, &mut contents) {
+      Ok(_) => HTTPResponse::ok(Box::new(contents)),
+      Err(_) => HTTPResponse::server_error(),
+    }
+  } else {
+    println!("Path not found {:?}", path);
+    HTTPResponse::not_found()
   }
+}
+
+fn load_file(path: PathBuf, contents: &mut String) -> Result<usize, std::io::Error> {
+  let mut file = File::open(path).unwrap();
+  file.read_to_string(contents)
+}
+
+fn load_index(path: PathBuf, buf: &mut String) -> Result<u16, &'static str> {
+  buf.push_str(&format!("<h1>Index of {}</h1>\n<hr/>\n", path.display()));
+  Ok(0)
+  //for path in fs::read_dir(dir).unwrap() {
+  //}
 }
 
