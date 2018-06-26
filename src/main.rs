@@ -137,7 +137,11 @@ fn load_file(path: PathBuf, contents: &mut String) -> Result<usize, std::io::Err
 }
 
 fn load_index(path: PathBuf, buf: &mut String) -> Result<u16, &'static str> {
-  buf.push_str(&format!("<h1>Index of {}</h1>\n<hr/>\n", path.display()));
+  buf.push_str(&format!(
+    "<h1>Index of {0}</h1>\n<hr/><a href='{0}/..'><- parent directory</a><hr/>\n", 
+    path.display())
+  );
+
   for entry in std::fs::read_dir(path).unwrap() {
     if let Ok(d) = entry {
       buf.push_str(&format!("<a href='{0}'>{0}</a><br/>",
@@ -146,6 +150,7 @@ fn load_index(path: PathBuf, buf: &mut String) -> Result<u16, &'static str> {
           );
     }
   }
+  buf.push_str("\n<hr/><i>helloweb v0.1</i>");
   Ok(0)
 }
 
