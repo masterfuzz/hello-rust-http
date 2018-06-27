@@ -4,10 +4,10 @@ use std::path::PathBuf;
 use std::io::prelude::*;
 use std::io;
 use std::fs::{self, File};
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 
 #[derive(Debug)]
-pub enum HTTPStatus {
+pub enum Status {
   Ok = 200,
   BadRequest = 400,
   NotFound = 404,
@@ -15,30 +15,96 @@ pub enum HTTPStatus {
   ServerError = 500,
 }
 
-pub struct HTTPResponse {
-  status_code: HTTPStatus,
+pub struct Response {
+  status_code: Status,
   body: Option<Box<String>>,
 }
 
-impl HTTPResponse {
+pub struct Request {
+  method: Method,
+  url: Option<Box<String>>,
+  body: Option<Box<String>>,
+}
+
+#[derive(Debug)]
+pub enum RequestError {
+  BadRequest, BadMethod
+}
+
+pub enum Method {
+  Get, Post, Put, Head, Delete, Patch, Options
+}
+
+impl Request {
+  pub fn from_stream(mut stream: TcpStream) -> Result<Self, RequestError> {
+    let mut buffer = [0; 512];
+
+    stream.read(&mut buffer).unwrap();
+    let request = String::from_utf8_lossy(&buffer[..]);
+
+    // for now only GET
+    if request.starts_with("GET") {
+      match request.split(" ").nth(1) {
+        Some(s) => Ok(Request::get(s)),
+        None => Err(RequestError::BadRequest),
+      }
+    } else {
+      Err(RequestError::BadMethod)
+    }
+  }
+
+  pub fn get(url: &str) -> Self {
+    Request{
+      method: Method::Get,
+      url: Some(Box::new(String::from(url))),
+      body: None
+    }
+  }
+}
+
+pub struct Server {
+  binding: &'static str,
+  pub listener: TcpListener,
+}
+
+impl Server {
+  pub fn bind(binding: &'static str) -> Result<Self, std::io::Error> {
+    let res = TcpListener::bind(binding);
+    if res.is_ok() {
+      Ok(Server{binding: binding, listener: res.ok().unwrap()})
+    } else {
+      Err(res.err().unwrap())
+    }
+  }
+
+//  pub fn incomming(self) -> Iterator<Item=Request> {
+//    self.listener.incoming().map(|mut s| Request::from_stream(s.unwrap()) )
+//  }
+}
+
+impl Response {
+  pub fn new(status: Status, body: Option<Box<String>>) -> Self {
+    Response{status_code: status, body: body}
+  }
+
   fn ok(body: Box<String>) -> Self {
-    HTTPResponse{status_code: HTTPStatus::Ok, body: Some(body)}
+    Response{status_code: Status::Ok, body: Some(body)}
   }
 
   fn bad_request() -> Self {
-    HTTPResponse{status_code: HTTPStatus::BadRequest, body: None}
+    Response{status_code: Status::BadRequest, body: None}
   }
 
   fn not_found() -> Self {
-    HTTPResponse{status_code: HTTPStatus::NotFound, body: None}
+    Response{status_code: Status::NotFound, body: None}
   }
 
   fn bad_method() -> Self {
-    HTTPResponse{status_code: HTTPStatus::BadMethod, body: None}
+    Response{status_code: Status::BadMethod, body: None}
   }
 
   fn server_error() -> Self {
-    HTTPResponse{status_code: HTTPStatus::ServerError, body: None}
+    Response{status_code: Status::ServerError, body: None}
   }
 
   pub fn write(self, stream: &mut TcpStream) -> io::Result<()> {
@@ -58,26 +124,39 @@ impl HTTPResponse {
   }
 }
 
-impl fmt::Display for HTTPResponse {
+impl fmt::Display for Response {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "HTTPResponse<{:?}>", self.status_code)
+    write!(f, "Response<{:?}>", self.status_code)
   }
 }
 
+pub trait RequestHandler {
+  fn handle(self, Request) -> Response;
+}
 
-pub fn get_response(input: &str) -> HTTPResponse {
-  // GET / HTTP/1.1\r\n
-  if input.starts_with("GET") {
-    match input.split(" ").nth(1) {
-      Some(s) => load_url(s),
-      None => HTTPResponse::bad_request(),
+#[derive(Copy, Clone)]
+pub struct FileHandler;
+
+impl FileHandler {
+  pub fn new() -> Self {
+    FileHandler{}
+  }
+}
+
+impl RequestHandler for FileHandler {
+  fn handle(self, req: Request) -> Response {
+    match req.method {
+      Method::Get => 
+        match req.url {
+          Some(s) => load_url(&s),
+          None => Response::bad_request(),
+        }
+      _ => Response::bad_method()
     }
-  } else {
-    HTTPResponse::bad_method()
   }
 }
 
-fn load_url(url: &str) -> HTTPResponse {
+fn load_url(url: &str) -> Response {
   let mut path = PathBuf::from("./");
   path.push(url);
 
@@ -86,20 +165,20 @@ fn load_url(url: &str) -> HTTPResponse {
 
     let mut contents = String::new();
     match load_index(path, &mut contents) {
-      Ok(_) => HTTPResponse::ok(Box::new(contents)),
-      Err(_) => HTTPResponse::server_error(),
+      Ok(_) => Response::ok(Box::new(contents)),
+      Err(_) => Response::server_error(),
     }
   } else if path.is_file() {
     println!("Load file: {:?}", path);
 
     let mut contents = String::new();
     match load_file(path, &mut contents) {
-      Ok(_) => HTTPResponse::ok(Box::new(contents)),
-      Err(_) => HTTPResponse::server_error(),
+      Ok(_) => Response::ok(Box::new(contents)),
+      Err(_) => Response::server_error(),
     }
   } else {
     println!("Path not found {:?}", path);
-    HTTPResponse::not_found()
+    Response::not_found()
   }
 }
 
