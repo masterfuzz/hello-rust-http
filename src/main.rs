@@ -8,10 +8,11 @@ fn main() {
   let handler = http::FileHandler::new();
   println!("Listening on 0.0.0.0:7878");
 
-  for request in server.listener.incoming() {
-    if let Ok(r) = request {
+  for stream in server.listener.incoming() {
+    if let Ok(mut stream) = stream {
       //thread::spawn(|| {
-                handler.handle(http::Request::from_stream(r).unwrap());
+                let resp = handler.handle(http::Request::from_stream(&mut stream).unwrap());
+                resp.write(&mut stream);
       //         });
     } else {
       println!("Connection error");

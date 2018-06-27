@@ -36,7 +36,7 @@ pub enum Method {
 }
 
 impl Request {
-  pub fn from_stream(mut stream: TcpStream) -> Result<Self, RequestError> {
+  pub fn from_stream(stream: &mut TcpStream) -> Result<Self, RequestError> {
     let mut buffer = [0; 512];
 
     stream.read(&mut buffer).unwrap();
